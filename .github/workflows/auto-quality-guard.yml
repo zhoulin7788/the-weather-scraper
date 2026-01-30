@@ -1,8 +1,9 @@
 # 自动化质量与安全保障工作流
 name: auto-quality-guard
 
-# 触发规则：push到master、PR目标为master、每日UTC 04:00定时触发
+# 触发规则：手动触发 + push到master + PR目标为master + 每日UTC 04:00定时触发
 on:
+  workflow_dispatch:  # 关键！添加这行，立刻开启手动触发，页面会出现Run workflow按钮
   push:
     branches: [master]
   pull_request:
