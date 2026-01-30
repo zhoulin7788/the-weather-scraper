@@ -1,0 +1,87 @@
+# 自动化质量与安全保障工作流
+name: auto-quality-guard
+
+# 触发规则：push到master、PR目标为master、每日UTC 04:00定时触发
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: '0 4 * * *'  # 定时触发规则：分 时 日 月 周
+
+# 三大有序作业（下游依赖上游，按dep-scan→code-check→report-merge执行）
+jobs:
+  dep-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取仓库代码
+        uses: actions/checkout@v4
+      - name: 配置Python3.12环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 安装依赖及扫描工具
+        run: |
+          python -m pip install --upgrade pip
+          # 容错：判断requirements.txt是否存在，存在才安装项目依赖
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # 安装依赖漏洞扫描工具pip-audit
+          pip install pip-audit
+      - name: 执行依赖漏洞扫描，生成JSON报告
+        run: pip-audit --format json > dep-vuln-report.json || true  # 容错：扫描失败不中断工作流
+      - name: 上传依赖扫描临时报告
+        uses: actions/upload-artifact@v4
+        with:
+          name: dep-vuln-report
+          path: dep-vuln-report.json
+          if-no-files-found: warn  # 容错：文件不存在仅警告，不失败
+
+  code-check:
+    needs: dep-scan  # 依赖dep-scan作业完成后执行
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取仓库代码
+        uses: actions/checkout@v4
+      - name: 配置Python3.12环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 安装检测工具
+        run: |
+          python -m pip install --upgrade pip
+          # 安装代码风格检测(flake8)和静态安全检测(bandit)工具
+          pip install flake8 bandit
+          # 容错：判断requirements.txt是否存在，存在才安装项目依赖
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: 执行flake8检测（仅检查E9/F63/F7/F82严重错误）
+        run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || true  # 容错
+      - name: 执行bandit安全检测，生成JSON报告
+        run: bandit -r . -f json -o code-sec-report.json || true  # 容错
+      - name: 上传代码检测临时报告
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-sec-report
+          path: code-sec-report.json
+          if-no-files-found: warn  # 容错
+
+  report-merge:
+    needs: code-check  # 依赖code-check作业完成后执行
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载依赖扫描临时报告
+        uses: actions/download-artifact@v4
+        with:
+          name: dep-vuln-report
+          path: quality-reports  # 下载到quality-reports目录，用于聚合
+      - name: 下载代码检测临时报告
+        uses: actions/download-artifact@v4
+        with:
+          name: code-sec-report
+          path: quality-reports
+      - name: 上传聚合后的最终报告包
+        uses: actions/upload-artifact@v4
+        with:
+          name: the-weather-scraper-quality-reports  # 固定产物名称
+          path: quality-reports  # 聚合后的报告目录
+          if-no-files-found: warn  # 容错
